@@ -1,46 +1,20 @@
-/**
- * Represents a trace entry in the Signal's journey
- */
+import type {SignalInstance, TraceData, TraceEntry, SignalPluginConfig , SignalPlugin }  from "./types";
+import { SignalPluginRegistry } from "./signal-plugin-registry";
 import crypto from "node:crypto";
-type SignalStatus = "success" | "error" | "pending";
-
-export interface Reflection {
-	/** Method name that triggered this reflection */
-	method?: string;
-	/** Class name that triggered this reflection */
-	class?: string;
-	/** Message describing the reflection */
-	message?: string;
-
-	/** Contextual data related to this reflection */
-	context?: Record<string, unknown>;
-	/** Timestamp when this reflection was created */
-	timestamp: number;
-}
-
-export interface TraceEntry {
-	/** Layer or function name */
-	layer: string;
-	/** Timestamp when this entry was created */
-	timestamp: number;
-	/** Optional reflections about this layer */
-	status?: SignalStatus;
-
-	reflections?: Array<Reflection>;
-	/** Error that occurred at this step, if any */
-	error?: Error;
-}
 
 /**
  * Signal is a self-aware data container that tracks its journey through layers
  */
-export class Signal<T> {
+
+export class Signal<T> implements SignalInstance<T> {
 	private readonly _value?: T;
 	private readonly _error?: Error;
 	private readonly _trace: TraceEntry[] = [];
 	private readonly _metadata: Record<string, unknown> = {};
 	private readonly _id: string;
-	private static extensions: Record<string, (...args: any[]) => any> = {};
+
+	private static plugins: Map<string, SignalPlugin> = new Map();
+  
 
 	constructor(
 		value?: T,
@@ -53,9 +27,15 @@ export class Signal<T> {
 		this._trace = [...trace];
 		this._metadata = metadata;
 		this._id =
-			typeof metadata.id === "string" ? metadata.id : crypto.randomUUID();
+			typeof metadata.id === "string" ? 
+			metadata.id 
+			: 
+			crypto.randomUUID();
 	}
 
+	get id(): string {
+    	return this._id;
+  	}
 	// Core properties and methods
 	get isSuccess(): boolean {
 		return this._error === undefined;
@@ -149,6 +129,7 @@ export class Signal<T> {
 		message: string,
 		caller?: any,
 		context?: Record<string, unknown>,
+	    component?: string
 	): Signal<T> {
 		const methodData = caller ? this._getMethodName(caller) : undefined;
 
@@ -387,19 +368,8 @@ export class Signal<T> {
 		return result;
 	}
 
-	traceData(): Array<{
-		layer: string;
-		timestamp: string;
-		status: "success" | "error";
-		error?: string;
-		reflections?: Array<{
-			message: string;
-			method?: string;
-			class?: string;
-			timestamp: string;
-			context?: Record<string, unknown>;
-		}>;
-	}> {
+	traceData(): Array<TraceData>
+	 {
 		// Return all trace entries, not just the first one
 		return this._trace.map((entry) => ({
 			layer: entry.layer,
@@ -481,25 +451,6 @@ export class Signal<T> {
 		return this._value as T;
 	}
 
-	static plugin<T>(name: string, fn: (...args: any[]) => any): void {
-		Signal.extensions[name] = fn;
-	}
-
-	// Access extensions through "with" namespace
-	get with(): Record<string, (...args: any[]) => any> {
-		const signal = this;
-		return new Proxy(
-			{},
-			{
-				get(_target, prop: string) {
-					if (typeof prop === "string" && Signal.extensions[prop]) {
-						return (...args: any[]) => Signal.extensions[prop](signal, ...args);
-					}
-					throw new Error(`Extension "${String(prop)}" is not registered`);
-				},
-			},
-		);
-	}
 
 	/**
 	 * Create a static helper for tracing the call chain through layers
@@ -527,4 +478,33 @@ export class Signal<T> {
 			},
 		]);
 	}
+
+	/**
+	 * Plugin system
+	 */
+
+	static registerPlugin<TOptions>(plugin: SignalPlugin<TOptions>): void {
+  			SignalPluginRegistry.getInstance().register(plugin);
+		}
+
+	static unregisterPlugin(pluginId: string): void {
+ 		 SignalPluginRegistry.getInstance().unregister(pluginId);
+	}
+
+	with<U = T>(pluginConfig: SignalPluginConfig | string): Signal<U> {
+		const pluginId = typeof pluginConfig === 'string' ? pluginConfig : pluginConfig.id;
+		const options = typeof pluginConfig === 'string' ? undefined : pluginConfig.options;
+		
+		// Use class name instead of this
+		const plugin = Signal.plugins.get(pluginId);
+		if (!plugin) {
+			console.warn(`Plugin '${pluginId}' not found. Returning original signal.`);
+			return this as unknown as Signal<U>;
+		}
+		
+		// Execute the plugin and return the result
+		return plugin.execute(this, options) as unknown as Signal<U>;
+	}
+
+	
 }

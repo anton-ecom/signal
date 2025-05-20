@@ -1,4 +1,4 @@
-import { Signal, type Reflection } from "../signal";
+import { Signal, type Reflection } from "../core/signal";
 import { performance } from "node:perf_hooks";
 import crypto from "node:crypto";
 /**
