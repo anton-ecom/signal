@@ -1,4 +1,10 @@
-import type {SignalInstance, TraceData, TraceEntry, SignalPluginConfig , SignalPlugin }  from "./types";
+import type {
+	SignalInstance,
+	TraceData,
+	TraceEntry,
+	SignalPluginConfig,
+	SignalPlugin,
+} from "./types";
 import { SignalPluginRegistry } from "./signal-plugin-registry";
 import crypto from "node:crypto";
 
@@ -13,8 +19,7 @@ export class Signal<T> implements SignalInstance<T> {
 	private readonly _metadata: Record<string, unknown> = {};
 	private readonly _id: string;
 
-	private static plugins: Map<string, SignalPlugin> = new Map();
-  
+	public static readonly plugins: Map<string, SignalPlugin> = new Map();
 
 	constructor(
 		value?: T,
@@ -27,15 +32,12 @@ export class Signal<T> implements SignalInstance<T> {
 		this._trace = [...trace];
 		this._metadata = metadata;
 		this._id =
-			typeof metadata.id === "string" ? 
-			metadata.id 
-			: 
-			crypto.randomUUID();
+			typeof metadata.id === "string" ? metadata.id : crypto.randomUUID();
 	}
 
 	get id(): string {
-    	return this._id;
-  	}
+		return this._id;
+	}
 	// Core properties and methods
 	get isSuccess(): boolean {
 		return this._error === undefined;
@@ -123,15 +125,40 @@ export class Signal<T> implements SignalInstance<T> {
 	}
 
 	/**
-	 * Add a reflection to the most recent layer
-	 */
+	 * Add a reflection to the trace
+	 * @param message Message to add to the trace
+	 * @param context Optional context object to add to the trace
+	 * @param component Optional component name to add to the trace
+	 * 	*/
+
 	reflect(
 		message: string,
-		caller?: any,
 		context?: Record<string, unknown>,
-	    component?: string
+		component?: string,
 	): Signal<T> {
-		const methodData = caller ? this._getMethodName(caller) : undefined;
+		const methodData = component
+			? { methodName: component }
+			: this._getMethodName();
+
+		// If there are no trace entries, create a default one first
+		if (!this._trace || this._trace.length === 0) {
+			// Create a default trace entry
+			return new Signal<T>(this._value, this._error, [
+				{
+					layer: methodData?.methodName || "default",
+					timestamp: Date.now(),
+					reflections: [
+						{
+							message,
+							method: methodData?.methodName,
+							class: methodData?.className,
+							context,
+							timestamp: Date.now(),
+						},
+					],
+				},
+			]);
+		}
 
 		// Add reflection to the last trace entry
 		const lastEntry = this._trace[this._trace.length - 1];
@@ -154,8 +181,6 @@ export class Signal<T> implements SignalInstance<T> {
 				],
 			},
 		];
-
-		console.debug("New Trace", this._trace);
 
 		return new Signal<T>(this._value, this._error, newTrace);
 	}
@@ -241,37 +266,54 @@ export class Signal<T> implements SignalInstance<T> {
 		return this.fail(error, layer);
 	}
 
-	/**
-	 * Map the value if successful
-	 */
-	map<U>(fn: (value: T) => U, layer?: string): Signal<U> {
+	// Regular map - no trace by default
+	map<U>(fn: (value: T) => U): Signal<U> {
+		return this._map(fn, { trace: false });
+	}
+
+	// Traced map - adds trace entry
+	tracedMap<U>(fn: (value: T) => U, layer?: string): Signal<U> {
+		return this._map(fn, { trace: true, layer });
+	}
+
+	private _map<U>(
+		fn: (value: T) => U,
+		options?: { layer?: string; trace?: boolean },
+	): Signal<U> {
 		if (this.isFailure) {
 			return new Signal<U>(undefined, this._error, this._trace);
 		}
 
 		try {
 			const result = fn(this._value as T);
-			return new Signal<U>(result, undefined, [
-				...this._trace,
-				{
-					layer: layer || "map",
-					timestamp: Date.now(),
-					reflections: [
-						{
-							message: "Value transformed",
-							timestamp: Date.now(),
-						},
-					],
-				},
-			]);
+
+			// Only add a trace entry if explicitly requested
+			if (options?.trace) {
+				return new Signal<U>(result, undefined, [
+					...this._trace,
+					{
+						layer: options?.layer || "map",
+						timestamp: Date.now(),
+						reflections: [
+							{
+								message: "Value transformed",
+								timestamp: Date.now(),
+							},
+						],
+					},
+				]);
+			}
+			// Just return a new signal with the transformed value but same trace
+			return new Signal<U>(result, undefined, this._trace);
 		} catch (error) {
+			// Always trace errors
 			return new Signal<U>(
 				undefined,
 				error instanceof Error ? error : new Error(String(error)),
 				[
 					...this._trace,
 					{
-						layer: layer || "map",
+						layer: options?.layer || "map",
 						timestamp: Date.now(),
 						error: error instanceof Error ? error : new Error(String(error)),
 					},
@@ -279,12 +321,26 @@ export class Signal<T> implements SignalInstance<T> {
 			);
 		}
 	}
-
 	/**
 	 * Apply a function that returns a Signal, flattening the result
 	 * Preserves the parent-child relationship for tracing
 	 */
-	flatMap<U>(fn: (value: T) => Signal<U>, componentName?: string): Signal<U> {
+
+	// Regular map - no trace by default
+	flatMap<U>(fn: (value: T) => Signal<U>, layer?: string): Signal<U> {
+		return this._flatMap(fn, { trace: false });
+	}
+
+	// Traced map - adds trace entry
+	tracedFlatMap<U>(fn: (value: T) => Signal<U>, layer?: string): Signal<U> {
+		return this._flatMap(fn, { trace: true, layer });
+	}
+
+	_flatMap<U>(
+		fn: (value: T) => Signal<U>,
+		options?: { layer?: string; trace?: boolean },
+		layer?: string,
+	): Signal<U> {
 		if (this.isFailure || this._value === undefined) {
 			// If this signal is a failure, propagate the failure
 			return new Signal<U>(undefined, this._error, [...this._trace]);
@@ -295,33 +351,36 @@ export class Signal<T> implements SignalInstance<T> {
 			const nextSignal = fn(this._value);
 
 			// Create a new trace array with all previous entries plus a layer for this operation
-			const newTrace = [
-				...this._trace,
-				{
-					layer: componentName || "flatMap",
-					timestamp: Date.now(),
-					status: nextSignal.isSuccess
-						? ("success" as const)
-						: ("error" as const),
-					error: nextSignal._error,
-					reflections: [
-						{
-							message: `Applied operation ${componentName || "flatMap"}`,
-							timestamp: Date.now(),
-						},
-					],
-				},
-			];
+			if (options?.trace) {
+				const newTrace = [
+					...this._trace,
+					{
+						layer: layer || "flatMap",
+						timestamp: Date.now(),
+						status: nextSignal.isSuccess
+							? ("success" as const)
+							: ("error" as const),
+						error: nextSignal._error,
+						reflections: [
+							{
+								message: `Applied operation ${layer || "flatMap"}`,
+								timestamp: Date.now(),
+							},
+						],
+					},
+				];
+				return new Signal<U>(nextSignal._value, nextSignal._error, newTrace);
+			}
 
 			// Return a new signal with the next value and combined trace
-			return new Signal<U>(nextSignal._value, nextSignal._error, newTrace);
+			return new Signal<U>(nextSignal._value, nextSignal._error, this._trace);
 		} catch (error) {
 			const err = error instanceof Error ? error : new Error(String(error));
 
 			return new Signal<U>(undefined, err, [
 				...this._trace,
 				{
-					layer: componentName || "flatMap",
+					layer: layer || "flatMap",
 					timestamp: Date.now(),
 					status: "error" as const,
 					error: err,
@@ -368,8 +427,7 @@ export class Signal<T> implements SignalInstance<T> {
 		return result;
 	}
 
-	traceData(): Array<TraceData>
-	 {
+	traceData(): Array<TraceData> {
 		// Return all trace entries, not just the first one
 		return this._trace.map((entry) => ({
 			layer: entry.layer,
@@ -392,10 +450,12 @@ export class Signal<T> implements SignalInstance<T> {
 	/**
 	 * Helper method to extract the calling method name from the stack trace
 	 */
-	private _getMethodName(
-		obj: any,
-	): { methodName?: string; className?: string } | undefined {
-		if (!obj) return undefined;
+	private _getMethodName():
+		| { methodName?: string; className?: string }
+		| undefined {
+		//if (!obj) return undefined;
+
+		//const obj = this;
 
 		// Try to find the calling method name from stack trace
 		try {
@@ -412,8 +472,8 @@ export class Signal<T> implements SignalInstance<T> {
 				return { className, methodName };
 			}
 
-			if (obj.constructor?.name) {
-				return { methodName: `${obj.constructor.name}` };
+			if (this.constructor?.name) {
+				return { methodName: `${this.constructor.name}` };
 			}
 		} catch (error) {
 			// Silently fail - method name detection is non-critical
@@ -421,8 +481,8 @@ export class Signal<T> implements SignalInstance<T> {
 		}
 
 		// Last resort: just use the object's constructor name
-		return obj.constructor
-			? { methodName: obj.constructor.name }
+		return this.constructor
+			? { methodName: this.constructor.name }
 			: { methodName: "unknown" };
 	}
 
@@ -450,7 +510,6 @@ export class Signal<T> implements SignalInstance<T> {
 		}
 		return this._value as T;
 	}
-
 
 	/**
 	 * Create a static helper for tracing the call chain through layers
@@ -484,27 +543,52 @@ export class Signal<T> implements SignalInstance<T> {
 	 */
 
 	static registerPlugin<TOptions>(plugin: SignalPlugin<TOptions>): void {
-  			SignalPluginRegistry.getInstance().register(plugin);
+		if (!plugin || typeof plugin !== "object" || !plugin.id) {
+			console.error("Invalid plugin provided to registerPlugin");
+			return;
 		}
 
+		//console.info(`Registering plugin: ${plugin.id}`);
+
+		if (Signal.plugins.has(plugin.id)) {
+			// console.warn(`Plugin '${plugin.id}' is already registered. Skipping registration.`);
+			return;
+		}
+
+		// Add the plugin to the registry
+		Signal.plugins.set(plugin.id, plugin as SignalPlugin);
+
+		if (typeof plugin.init === "function") {
+			try {
+				plugin.init();
+			} catch (error) {
+				// console.error(`Error initializing plugin '${plugin.id}':`, error);
+			}
+		}
+
+		//console.info(`Plugin ${plugin.id} registered successfully. Total plugins: ${Signal.plugins.size}`);
+	}
+
 	static unregisterPlugin(pluginId: string): void {
- 		 SignalPluginRegistry.getInstance().unregister(pluginId);
+		SignalPluginRegistry.getInstance().unregister(pluginId);
 	}
 
 	with<U = T>(pluginConfig: SignalPluginConfig | string): Signal<U> {
-		const pluginId = typeof pluginConfig === 'string' ? pluginConfig : pluginConfig.id;
-		const options = typeof pluginConfig === 'string' ? undefined : pluginConfig.options;
-		
+		const pluginId =
+			typeof pluginConfig === "string" ? pluginConfig : pluginConfig.id;
+		const options =
+			typeof pluginConfig === "string" ? undefined : pluginConfig.options;
+
 		// Use class name instead of this
 		const plugin = Signal.plugins.get(pluginId);
 		if (!plugin) {
-			console.warn(`Plugin '${pluginId}' not found. Returning original signal.`);
+			console.warn(
+				`Plugin '${pluginId}' not found. Returning original signal.`,
+			);
 			return this as unknown as Signal<U>;
 		}
-		
+
 		// Execute the plugin and return the result
 		return plugin.execute(this, options) as unknown as Signal<U>;
 	}
-
-	
 }
