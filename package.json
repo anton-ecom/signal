@@ -4,12 +4,18 @@
   "description": "Experimental Fractal Architecture pattern for Synet development",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+  ".": {
+    "types": "./dist/index.d.ts",
+    "default": "./dist/index.js"
+  }
+  },
   "files": [
     "dist"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/synthetism/synet/packages/signal.git"
+    "url": "https://github.com/anton-ecom/signal.git"
   },
   "scripts": {
     "build": "tsc",
@@ -19,10 +25,10 @@
     "coverage": "vitest run --coverage",
     "lint": "biome lint ./examples ./src  ",
     "format": "biome format --write  ./examples ./src",
-    "prepublishOnly": "npm run lint && npm run build",
-    "publish:dig": "npm publish --registry https://registry.dig.run",
-    "unpublish:dig": "npm unpublish @synet/patterns --registry https://registry.dig.run  --force",
-    "dig":" npm run unpublish:dig && npm run publish:dig"
+    "prepublishOnly": "npm run clean && npm run build",
+    "dig:publish": "npm publish --registry https://registry.dig.run",
+    "dig:unpublish": "npm unpublish @synet/patterns --registry https://registry.dig.run  --force",
+    "dig": "npm run dig:unpublish && npm run dig:publish"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
