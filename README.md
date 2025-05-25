@@ -90,7 +90,7 @@ const signal = Signal.open('Layer')
 console.log(signal.traceData());
 ```
 
-Output:
+Output of `signal.traceData()`:
 
 ```json
 [
@@ -119,14 +119,12 @@ const signal = Signal.success("user")
 console.log(signal.trace());
 ```
 
-Output:
+Output `signal.trace()` :
 
-```
 [2025-05-25T12:00:00.000Z] Repository (OK)
-  [2025-05-25T12:00:01.000Z] Fetched user data
+[2025-05-25T12:00:01.000Z] Fetched user data
 [2025-05-25T12:00:02.000Z] Service (OK)
-  [2025-05-25T12:00:03.000Z] Validated user
-```
+[2025-05-25T12:00:03.000Z] Validated user
 
 ### 5. **Signal Extension**
 
@@ -159,7 +157,7 @@ const newSignal = Signal
 #### Key Features:
 
 1. **Layering** Add semantic layers to the signal's trace, providing clear separation of concerns and improving traceability.
-2. **Transformation** Use methods like `flatMap` or `traceFlatMap` to transform the signal's value while maintaining its state and trace.
+2. **Transformation** Use methods like `flatMap` or `traceFlatMap` (adds trace) to transform the signal's value while maintaining its state and trace.
 3. **Flow Control** Handle success and failure scenarios with `onSuccess` and `onFailure` hooks, enabling side effects and logging.
 4. **Reflection**
    Annotate the signal's journey with meaningful messages, creating a rich, contextual trace.
@@ -181,13 +179,11 @@ const signal = Signal.success("user")
   .reflect("User validation complete");
 ```
 
-The **Signal Extension** transforms the **Signal `<T>`** pattern into a living artifact of your system's flow. It allows signals to evolve naturally, carrying their history and context forward while adapting to new requirements. 
-
-
+The **Signal Extension** transforms the **Signal `<T>`** pattern into a living artifact of your system's flow. It allows signals to evolve naturally, carrying their history and context forward while adapting to new requirements.
 
 ### 6. **Extensibility**
 
-The **Signal`<T>`** pattern is designed to evolve. Its plugin system allows you to extend its behavior with custom logic, creating a DSL for your architecture.
+The **Signal `<T>`** pattern is designed to evolve. Its plugin system allows you to extend its behavior with custom logic, creating a DSL for your architecture.
 
 ```typescript
 const loggingPlugin = {
